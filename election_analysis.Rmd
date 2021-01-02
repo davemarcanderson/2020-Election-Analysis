@@ -1,0 +1,365 @@
+---
+title: "2020 Election Analysis"
+author: "Dave Anderson"
+date: "November 29, 2020"
+output:
+  html_document:
+    df_print: paged
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+
+#Libraries
+
+library(tidyverse)
+library(reshape2)
+library(ggthemr)
+library(readxl)
+library(gridExtra)
+library(kableExtra)
+library(stringi)
+library(socviz)
+library(grid)
+
+```
+#Introduction
+  Personally, I do not spend much time learning about the day to day events of politics, and I believe we spend too much time as a country focusing on irrelevant nuances of our elections. That said, the presidential election is a beautiful opportunity to get a pulse of the nation's mindset as a whole. There are plenty of better ways to do this in our data-driven world, but election data is assumed to be accurate, representative of everyone and, most importantly, it is available to the public (me). From what I did hear and read in the news, most of the election was focused on dividing the poluations into subgroups, specifically by rural, suburban and urban populations as well as race and gender. Each party assumed they had certain groups in control (ex. urban minorities for Biden) while other groups appeared to be swing potentials and became the focus of campaign strategies (ex. suburban women). Although the candidates searched for potential groups to gain votes from, the nation appeared to be more divided and set in their views leading into the election then ever. Both Republican and Democrat populations appear to have a growing section of supporters who no longer view the oposing side as peers with varying values and ideas, but as an inferior and less intelligent population misaligned with American values. 
+  
+  There is hypocracy in this project, because although I encourage a focus on policy, civil discourse and avoidance of over-generalizations, this report is a "necessary evil" oposition to those principals. From a national perspective, are we truly as divided along these demographic and location indicators as our media describes? Are there common characteristics that distingush these populations? Are there characteristics that unite these populations as Americans facing common issues? These are important questions to address, even if there aren't exact answers. Every county in our country is unique in a variety of ways, all of which leading to the data in these visualizations. Our job as problem solvers is often to either zoom in or out. Since the topic of conversation is national divide, it is only right to zoom out. 
+  
+  
+  Disclaimer on legitamacy of election results: 
+  Every election has ballots missed, miscounted, falsified, etc. Our voting process is living in the stone ages, and polititians generally seem to like it that way. We have had some incredible statisticians and investigators doing very challenging work to ensure an accurate outcome. Any counter opinion to that fact which relies on individual stories reported by a biased media outlet should be dismissed while being compared to experts who have dedicated their lives to understand the content of the problem. 
+
+
+
+#Data and Methods
+
+  The base dataset of county-level presidential election results comes Thomson Reuters, and although I chose to focus on the two frontrunners, there is data for other candidates as well. This data can be easily downloaded via Kaggle. I supplimented this data with county-level statistics from a variety of sources. The focus of these additional variables became around edcuation and income, utilizing ers.usda.gov, data.gov and census.gov. 
+  
+  After combining the datasets into a master, county-level dataframe, I engineered a number of variables for more appropriate calculations and additional insights, including an opportunity to specifically investigate prevelance of manufactoring and other industries. Overall investigations of the election results began with a simple EDA to address the questions posed in the introduction. Finally, I created a logistic regression model with key variables as predictors to determine the largest drivers of how a county voted. 
+  
+
+
+```{r,include = FALSE,echo=FALSE} 
+#########################PULL/Format Data######################
+#FIPS Codes
+county_fips <- read_csv("county_fips_codes.csv")
+
+#Load/transform Presidential Data
+county_rate <- read_csv("Election Data/president_county.csv")
+county_rate$county <- str_remove(county_rate$county," County")
+
+  county_data <- merge(county_fips,county_rate, by = c("state","county"))
+
+  
+county_candidates <- read_csv("Election Data/president_county_candidate.csv")
+county_candidates <- dcast(county_candidates, state + county ~ candidate, value.var = "total_votes")
+county_candidates$county <- str_remove(county_candidates$county," County")
+
+county_data <- merge(county_data,county_candidates, by = c("state","county"))
+  for (i in 8:45) {
+    county_data[,i] <- round((county_data[,i]/county_data[,5])*100,2)
+  }
+  
+county_data <- county_data[,c(1:7,18,26)]
+
+
+#Demographic Data
+county_demographic_data <- read_csv("county_demographic_data.csv")
+county_demographic_data2019 <- county_demographic_data %>% filter(YEAR == 12) %>% filter(AGEGRP == 0)
+county_demographic_data2019 <- county_demographic_data2019[,-c(1,2,6,7)]
+for (i in 5:76) {
+  county_demographic_data2019[,i] <- round((county_demographic_data2019[,i]/county_demographic_data2019[,4])*100,2)
+}
+county_demographic_data2019 <- rename(county_demographic_data2019,state = STNAME, county = CTYNAME, county_code = COUNTY)
+county_demographic_data2019$county <- str_remove(county_demographic_data2019$county," County")
+
+
+
+    county_data <- merge(county_data,county_demographic_data2019, by = c("state","county"))
+
+
+#Education Data  
+county_education_data <- read_csv("county_education_data.csv")
+
+    county_data <- merge(county_data,county_education_data, by = "FIPS")
+    
+    
+#Poverty Data
+county_poverty_data <- read_xls("county_poverty_data.xls")
+county_poverty_data$county <- str_remove(county_poverty_data$county," County")
+colnames(county_poverty_data)[1] <- "state_abb"
+county_poverty_data[,3:4] <- sapply(county_poverty_data[,3:4],as.numeric)
+
+    county_data <- merge(county_data,county_poverty_data, by = c("state_abb","county"))
+    
+    
+#COVID Data
+county_COVID_data <- read_csv("county_COVID_data.csv")
+county_COVID_data <- county_COVID_data[,c(1,5,6)]
+colnames(county_COVID_data)[1] <- "FIPS"
+
+    county_data <- left_join(county_data,county_COVID_data,by = "FIPS")
+
+#Unemployment Data
+county_unemployment_data <- read_csv("county_unemployment_data.csv")
+
+    county_data <- left_join(county_data, county_unemployment_data, by = "FIPS")
+  
+
+#Industry Data
+county_industry_data <- read_csv("county_industry_data.csv")
+
+  county_data <- left_join(county_data, county_industry_data, by = "FIPS")
+
+
+  
+  
+  
+###Feature Engineering    
+county_data$trump_win <- as.factor(ifelse(county_data$`Donald Trump` > county_data$`Joe Biden`,1,0))
+county_data <- county_data[!is.na(county_data$trump_win),]
+county_data$urban_suburban_rural <- ifelse(county_data$`rural-suburban_score` < 4, "Urban", ifelse(county_data$`rural-suburban_score` <= 6 & county_data$`rural-suburban_score` >= 4, "Suburban","Rural"))
+county_data$percent_voted <- round((county_data$total_votes/county_data$TOT_POP)*100,2)
+
+
+```
+
+```{r}
+#Summary Display
+
+area_data <- county_data %>% group_by(urban_suburban_rural) %>% summarise(Counties = n(),Population = sum(TOT_POP),Trump_wins = sum((as.numeric(trump_win))-1),median_black = median(BA_MALE,na.rm = TRUE)+ median(BA_FEMALE,na.rm = TRUE),median_white = median(WA_MALE,na.rm = TRUE) + median(WA_FEMALE,na.rm = TRUE),median_income = median(as.numeric(median_household_income),na.rm = TRUE),median_college = median(`2018_college_completion`,na.rm = TRUE),percent_voted = median(percent_voted))
+area_data <- area_data[1:3,]
+area_data[,4] <- (area_data[,4]/area_data[,2])*100
+colnames(area_data) <- c("Environment","Number of Counties","Total Population","Percent of Counties for Trump","Median Black Population (%)", "Median White Population (%)", "Median Income","Median College Graduation (%)","Voting Rate")
+
+area_data$`Total Population` <- formatC(round(area_data$`Total Population`/1000,0), format="d", big.mark=",")
+area_data$`Percent of Counties for Trump` <- paste(as.character(round(area_data$`Percent of Counties for Trump`,0)),"%")
+area_data$`Median Black Population (%)` <- paste(as.character(round(area_data$`Median Black Population (%)`,1)),"%")
+area_data$`Median White Population (%)` <- paste(as.character(round(area_data$`Median White Population (%)`,1)),"%")
+area_data$`Median Income` <- paste("$",as.character(formatC(area_data$`Median Income`, format="d", big.mark=",")))
+area_data$`Median College Graduation (%)` <- paste(area_data$`Median College Graduation (%)`,"%")
+area_data$`Voting Rate` <- paste(as.character(round(area_data$`Voting Rate`,0)),"%")
+
+colnames(area_data) <- c("Environment","n Counties", "Population (Thousands)","Percent of Counties for Trump","Median Black Population","Median White Population","Median Income","Median College Graduation","Voting Rate")
+
+table1 <- kable(area_data)
+
+table1 %>% kable_styling(bootstrap_options = "striped",position = "center") %>% row_spec(0,color = "white",background = "#f66c6c",align = "c") %>% row_spec(1:3,align = "c") %>% column_spec(1,bold = T)
+
+
+county_data %>% filter(!is.na(urban_suburban_rural)) %>% 
+  ggplot()+
+    geom_histogram(aes(`Donald Trump`, fill = urban_suburban_rural))+
+    facet_grid(. ~ urban_suburban_rural)+
+    labs(title = "Distribution of Trump Success by Environment", x = "Percent of County for Trump", y = "Number of Counties")+
+    scale_fill_discrete(name = "Environment")
+```
+  There are a few notable surprises from the general summary table above. For one, while many of us have an image in our head of urban blue, there are actually more urban counties voting for trump than not. I think people would also agree that the college education and income statistics would be expected to be much higher, especially compared to the rural. 
+
+
+#Results
+
+###Education
+  The liberal media tends to paint supporters of Donald Trump as unedcutated and therefore more suseptable to misinformation. Between social media, the entertainment-driven divide of our network news stations, and a dying print media, misinformation is a critical topic to address in our nation. I would argue an effective formal education that helps train our citizens how to research and vet information is the best way to combat misinformation, and the chart below shows there is some evidence to support the idea that populations voting for Trump were, in general, more succeptable to misinformation.
+
+
+
+```{r}
+ggthemr("earth")
+
+ggplot(data = county_data, mapping = aes(x = county_data$trump_win, y = county_data$`2018_college_completion`, fill = trump_win))+
+  geom_boxplot(outlier.shape = NA)+
+  geom_jitter(color = "white", size = 0.4, alpha = 0.9)+
+  xlab("County Election Winner")+
+  ylab("College Completion Percentage")+
+  labs(title = "Individual County College Completion Distribution")+
+  scale_x_discrete(breaks=c("0","1"),labels=c("Biden", "Trump"))+
+  scale_fill_discrete(name = "Election Winner", labels=c("Biden", "Trump"))
+
+```
+
+  To quote the former president, it is what it is. Say what you want about the value of a formal education, as a former educator, I focus on it as a vital part of a functioning modern society. More important to me than this snapshot description of the two voting populations, I want to know how education in America has been changing. Many people point to the fact that misinformation can be a biproduct of an increasingly digital world, and therefore we must be becoming "dumber" as time goes on. The first set of plots below tells a different story, a drastic decrease of high school dropouts combined with an increase of college education across all environments of our country. I would argue that this is partly due to a lowering of expectations, but that is a discussion for another time. 
+  What is interesting is that when we plot the same information split out as "Biden" counties vs. "Trump" counties, we would expect to see a similar pattern. However, we do see that the current Republican population has not grown in college education in the same way that the country as a whole has. Why do people lack education? Some people leave formal education for a career oportunity that doesn't require it, but the plots by year are evidence that these opportunities are decreasing. Access to education should be less of an issue in the modern world, with plenty of loan options and online courses. My experience leads me to believe that those who lack formal education typically do so because they do not personally see the value of it. As a proponent of education reform, I understand the complaints, but the final chart of this section shows that education directly relates to financial stability for all environments of our nation. 
+
+```{r}
+#Counties Over Times
+
+timeline <- county_data[,84:ncol(county_data)]
+
+timeline_college <- timeline[,c(1,ncol(timeline)-1,3:7)] %>% gather("year","college_completion",3:7)
+timeline_college[[3]] <- str_replace(timeline_college[[3]],"_college_completion","")
+
+timeline_dropout <- timeline[,c(1,ncol(timeline)-1,8:12)] %>% gather("year","dropout",3:7)
+timeline_dropout[[3]] <- str_replace(timeline_dropout[[3]],"_hs_dropout","")
+
+timeline <- full_join(timeline_college,timeline_dropout,by = c("county_state","urban_suburban_rural","year"))
+timeline <- timeline %>% drop_na(urban_suburban_rural)
+
+trump_win <- county_data[,c(84,ncol(county_data)-2)]
+timeline <- left_join(timeline,trump_win, by = "county_state")
+timeline$trump_win <- ifelse(timeline$trump_win == 1, "Trump Counties", "Biden Counties")
+
+
+grid.arrange(
+ggplot(data = timeline,aes(x = year, y = dropout, fill = urban_suburban_rural))+
+  geom_boxplot()+
+  facet_grid(. ~ urban_suburban_rural)+
+  labs(title = "Dropout Rates Over Time",x = "Year", y = "Dropout Rates")
+,
+ggplot(data = timeline,aes(x = year, y = college_completion, fill = urban_suburban_rural))+
+  geom_boxplot()+
+  facet_grid(. ~ urban_suburban_rural)+
+  labs(title = "College Completion Over Time", x = "Year", y = "College Completion")
+,ncol = 1)
+
+
+ grid.arrange(
+ggplot(data = timeline,aes(x = year, y = dropout, fill = trump_win))+
+  geom_boxplot()+
+  facet_grid(. ~ trump_win)+
+  labs(title = "Dropout Rates Over Time",x = "Year", y = "Dropout Rates")
+,
+ggplot(data = timeline,aes(x = year, y = college_completion, fill = trump_win))+
+  geom_boxplot()+
+  facet_grid(. ~ trump_win)+
+  labs(title = "College Completion Over Time", x = "Year", y = "College Completion")
+,ncol = 1)
+ 
+ 
+ county_data$median_household_income <- as.numeric(county_data$median_household_income)
+ county_data %>% filter(`2018_college_completion` > 0) %>% filter(!is.na(median_household_income)) %>% 
+  ggplot(aes(x = `2018_college_completion`, y = median_household_income))+
+   geom_point()+
+   geom_smooth()+
+   facet_grid( . ~ urban_suburban_rural)+
+   labs(title = "College Completion vs. Median Income",x = "College Completion Percentage", y = "Median Household Income")
+
+
+```
+
+
+
+###Race
+
+  Another hot topic this election cycle has been a racial divide, spurred on by the killings of George Floyd and other black men and women. Unfortunetly without individual records, it is difficult to address any critical questions in this context. How successful are black individuals in each county compared to white individuals? How are voting lines drawn along race within counties? Is everyone treated respectfully and given the same access to success and happiness, regardless of race? These are obviously questions I can't, and shouldn't be able to, answer using publicly available data. 
+
+  We can, however, investigate general county-level trends, which lead to interesting findings. First of all, while there are rural counties with populations that are close to 100% black, we can see that there are definitely more urban counties with a larger black population in general. When we investigate the concept of racial division along party lines (shown in the scatter plot below), there are some interesting findings. If all black Americans voted for Biden, we would see a direct, negative correlation. While this trend is clearly visable, the relationship is much weaker in urban counties. This suggests that the "racial divide" our media portrays is more prevelant in suburban and rural counties. Regardless of environment, we can conclude that there are not many black americans that believe their needs will be met with Trump as president, which should obviously be a big concern for the Republican party. 
+```{r}
+
+county_data %>% filter(!is.na(urban_suburban_rural)) %>% 
+  ggplot()+
+  geom_boxplot(mapping = aes(x = (urban_suburban_rural), y = (BA_MALE+BA_FEMALE)))+
+  labs(title = "County Black Populations", x = "Environment", y = "Black Population Percentage")
+
+
+county_data %>% filter(!is.na(urban_suburban_rural)) %>% 
+  ggplot(mapping = aes(x = (BA_MALE+BA_FEMALE), y = `Donald Trump`), position =
+           "identity")+geom_point(aes(colour = as.factor(urban_suburban_rural)))+
+            labs(title = "Trump Success by Race and Environment", x = "Black Percent of Population", y = "Percent of County for Trump")
+
+
+
+
+```
+
+
+##Economics
+  
+  Forever a critical topic, we want to know how financially stable our communities are. This has also always been a focal point of policy for both Trump and his supporters. In 2020, the most important aspect of the economy, and our lives, is the impact of COVID-19. Interestingly, the county-level infection and death data does not show many significant trends pertaining to election results, and short-term, county-level employment and economic numbers to show the impact of the virus on county economies are difficult to come by. 
+  The perception of voting populations' economic standings tends to focus on the tails. When republicans think of democrats, they often refer to empoverished, homeless city-dwellers, feeding off of public support, as well as powerful, wealthy, corupt, corporate giants. When the tables are turned, you will often hear liberals imagining conservatives as "trailer-trash" or, again, corupt corporate giants. When we look at the distributions of poverty rates and income, we see the misleading aspects to these assumptions. First, the apex of poverty rates for Biden counties is slightly left of the apex for Trump counties, indicating that edcucation and social programs pay off. However, the right tail is much wider, indicating a greater number of empoverished populations. We also see this wider spread of income for democrat counties. (Note: sample size difference will also contribute to wider tails for Biden distributions.) 
+  
+```{r}
+title1 <- textGrob("Poverty Rates",gp=gpar(fontsize=20,font=3))
+title2 <- textGrob("Median Income",gp=gpar(fontsize=20,font=3))
+
+
+#Poverty
+grid.arrange(
+county_data %>% filter(trump_win == 1) %>% 
+  ggplot()+geom_density(aes(poverty_rate))+labs(x = "Poverty Rate", y = "Density", title = "Trump Counties")+xlim(0,50)+theme(axis.title.y = element_blank(),axis.text.y = element_blank())
+,
+county_data %>% filter(trump_win == 0) %>% 
+  ggplot()+geom_density(aes(poverty_rate))+labs(x = "Poverty Rate", y = "Density", title = "Biden Counties")+xlim(0,50)+theme(axis.title.y = element_blank(),axis.text.y = element_blank())
+,
+ncol = 1, top = title1)
+
+
+
+#Income
+grid.arrange(
+county_data %>% filter(trump_win == 1) %>% 
+  ggplot()+geom_density(aes((median_household_income/1000)), color = "lime green")+labs(x = "Median Household Income (Thousands)", y = "Density", title = "Trump Counties")+xlim(0,125)+theme(axis.title.y = element_blank(),axis.text.y = element_blank())
+,
+county_data %>% filter(trump_win == 0) %>% 
+  ggplot()+geom_density(aes((median_household_income/1000)), color = "lime green")+labs(x = "Median Household Income (Thousands)", y = "Density", title = "Biden Counties")+xlim(0,125)+theme(axis.title.y = element_blank(),axis.text.y = element_blank())
+,
+ncol = 1, top = title2)
+
+
+county_data %>% 
+  ggplot()+
+  geom_boxplot(aes(x = trump_win, y = county_data$`Professional/Tech Orgs`))
+```
+```{r}
+#Industries
+
+
+```
+
+
+
+
+```{r}
+#Demographics
+#ggplot(data = county_data, mapping = aes(x = county_data$BA_MALE, y = county_data$`Donald Trump`),na.rm = TRUE, position = "identity")+geom_point(aes(colour = as.factor(county_data$urban_suburban_rural)))
+
+#ggplot(data = county_data, mapping = aes(x = county_data$BA_FEMALE, y = county_data$`Donald Trump`, size = county_data$current_votes),na.rm   = TRUE, position = "identity")+geom_point(aes(colour = as.factor(county_data$urban_suburban_rural)))
+
+#demographics3 <- ggplot(data = county_data, mapping = aes(x = county_data$WA_MALE, y = county_data$`Donald Trump`, size = county_data$current_votes),na.rm =   TRUE, position = "identity")+ geom_point(aes(colour = as.factor(county_data$urban_suburban_rural)))
+
+#demographics4 <- ggplot(data = county_data, mapping = aes(x = county_data$WA_FEMALE, y = county_data$`Donald Trump`, size = county_data$current_votes),na.rm   = TRUE, position = "identity") + geom_point(aes(colour = as.factor(county_data$urban_suburban_rural)))
+
+
+```
+
+
+
+```{r}
+#counties <- county_map
+#colnames(counties)[7] <- "FIPS"
+#counties$FIPS <- str_remove(counties$FIPS,"^0+")
+#data_for_map <- county_data[,c(3,112)]
+#data_for_map$FIPS <- as.character(data_for_map$FIPS)
+#data_for_map <- left_join(counties,data_for_map,by = "FIPS")
+
+#ggplot(data_for_map, mapping = aes(x = long, y = lat, fill = `Manufacturing Employees`, group = as.factor(group)))+geom_polygon(color = "gray90",size = 0.05)+coord_equal()+scale_fill_brewer(palette = "Blues")
+```
+
+
+
+
+
+
+```{r}
+library(corrplot)
+library(RColorBrewer)
+
+#cor_data <- as.tibble(cbind(county_data$`Donald Trump`, county_data$TOT_POP, (county_data$WA_MALE+county_data$WA_FEMALE), county_data$`2018_college_completion`, county_data$median_household_income,county_data$`Deaths per 1,000`, as.factor(county_data$urban_suburban_rural)))
+#colnames(cor_data) <- c("Trump Percentage","Population","White Percentage","College Completion","Income","COVID-19 Deaths","Urban/Suburbal/Rural")
+
+#cor_data <- cor_data %>% filter(!is.na(`Urban/Suburbal/Rural`))
+
+#M <- cor(cor_data)
+#corrplot(M, type="upper", order="hclust", col=brewer.pal(n=8, name="RdYlBu"))
+
+
+#logit1 <- glm(trump_win ~ urban_suburban_rural + county_data$poverty_rate.y + county_data$`2018_college_completion` + county_data$percent_voted, data = county_data, family = binomial(link = "logit"))
+
+#summary(logit1)
+
+
+```
